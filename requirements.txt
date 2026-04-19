@@ -1,0 +1,11 @@
+python-binance>=1.0.27
+pandas>=2.0
+sqlalchemy>=2.0
+streamlit>=1.30
+loguru>=0.7
+python-dotenv>=1.0
+httpx>=0.27
+anthropic>=0.94.0
+feedparser>=6.0
+aiohttp>=3.9
+numpy>=1.24
