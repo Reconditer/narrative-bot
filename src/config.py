@@ -10,18 +10,24 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# ── Load .env from project root ──────────────────────────────────────
+# ── Load .env from project root (local dev only, ignored on Railway) ─
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(_PROJECT_ROOT / ".env")
+load_dotenv(_PROJECT_ROOT / ".env", override=False)
+
+def _require_env(key: str) -> str:
+    val = os.environ.get(key, "").strip()
+    if not val:
+        raise RuntimeError(f"Missing required env var: {key}")
+    return val
 
 # ── Binance Testnet ──────────────────────────────────────────────────
 TESTNET = True  # HARDCODED — never change
-BINANCE_API_KEY = os.environ["BINANCE_API_KEY"]
-BINANCE_API_SECRET = os.environ["BINANCE_API_SECRET"]
+BINANCE_API_KEY = _require_env("BINANCE_API_KEY")
+BINANCE_API_SECRET = _require_env("BINANCE_API_SECRET")
 BINANCE_TESTNET_URL = "https://testnet.binance.vision"
 
 # ── Anthropic (Claude) ──────────────────────────────────────────────
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+ANTHROPIC_API_KEY = _require_env("ANTHROPIC_API_KEY")
 CLAUDE_MODEL = "claude-haiku-4-5"  # fast + cheap for 5-min narrative cycles
 
 # ── Trading Parameters ──────────────────────────────────────────────
