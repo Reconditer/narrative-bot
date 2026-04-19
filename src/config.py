@@ -31,18 +31,34 @@ ANTHROPIC_API_KEY = _require_env("ANTHROPIC_API_KEY")
 CLAUDE_MODEL = "claude-haiku-4-5"  # fast + cheap for 5-min narrative cycles
 
 # ── Trading Parameters ──────────────────────────────────────────────
-STARTING_CAPITAL = 1000.0       # USDT per bot
-POSITION_SIZE = 200.0           # USDT per trade
-MAX_POSITIONS = 3               # concurrent open positions
+STARTING_CAPITAL = 100_000.0    # USDT per bot
+MAX_POSITIONS = 5               # concurrent open positions
 STOP_LOSS_PCT = -0.03           # -3%
-TRAILING_TP_ACTIVATE = 0.05    # +5% activates trailing stop
-TRAILING_TP_TRAIL = 0.02       # trails 2% behind peak
+TRAILING_TP_ACTIVATE = 0.03    # +3% activates trailing stop (was 5%)
+TRAILING_TP_TRAIL = 0.015      # trails 1.5% behind peak (tighter)
 MAX_HOLD_HOURS = 24             # force-close after 24h
+
+# ── Dynamic Position Sizing (confidence-based) ──────────────────────
+POSITION_SIZE_LOW = 1_000.0    # confidence 6-7 → small position
+POSITION_SIZE_MED = 3_000.0    # confidence 8 → medium position
+POSITION_SIZE_HIGH = 5_000.0   # confidence 9-10 → large position
+POSITION_SIZE_TA = 3_000.0     # flat size for Bot B (no confidence score)
+
+def get_position_size(confidence: int) -> float:
+    """Dynamic sizing based on LLM confidence."""
+    if confidence >= 9:
+        return POSITION_SIZE_HIGH
+    elif confidence >= 8:
+        return POSITION_SIZE_MED
+    return POSITION_SIZE_LOW
 
 # ── Narrative Bot Filters ────────────────────────────────────────────
 MAX_1H_PRICE_CHANGE = 0.15     # don't chase >15% pumps
 MIN_VOLUME_RATIO = 0.1         # lowered for testnet (real volume is near-zero)
 MIN_CONFIDENCE = 6             # LLM confidence threshold
+
+# ── Multi-Timeframe Confirmation ────────────────────────────────────
+CONFIRM_4H_UPTREND = True      # require 4h EMA9 > EMA21 before buying
 
 # ── Polling Intervals (seconds) ─────────────────────────────────────
 NARRATIVE_INTERVAL = 300        # 5 min

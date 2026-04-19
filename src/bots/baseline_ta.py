@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from loguru import logger
 from src.config import (
-    TA_INTERVAL, TA_SYMBOLS, POSITION_SIZE,
+    TA_INTERVAL, TA_SYMBOLS, POSITION_SIZE_TA,
     EMA_FAST, EMA_SLOW, RSI_PERIOD, RSI_OVERBOUGHT, RSI_OVERSOLD,
     EQUITY_SNAPSHOT_INTERVAL,
 )
@@ -80,7 +80,7 @@ async def run(exchange: Exchange) -> None:
                     if sig == "BUY":
                         logger.info(f"[{BOT_ID}] BUY {symbol} (RSI={result.get('rsi', '?'):.1f})")
                         await portfolio.open_position(
-                            ticker=symbol, usdt_amount=POSITION_SIZE,
+                            ticker=symbol, usdt_amount=POSITION_SIZE_TA,
                             signal_type="ema_cross_up",
                         )
                     elif sig == "SELL" and portfolio.has_open_position(symbol):

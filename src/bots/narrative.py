@@ -1,10 +1,19 @@
-"""Bot A — NARRATIVE: LLM-based narrative momentum strategy."""
+"""Bot A — NARRATIVE: LLM-based narrative momentum strategy.
+
+v2 Upgrades:
+- Dynamic position sizing (confidence-based)
+- 4h EMA trend confirmation before entry
+- Sentiment decay detection (sell when narrative peaks)
+"""
 from __future__ import annotations
 import asyncio
+import pandas as pd
 from loguru import logger
 from src.config import (
-    NARRATIVE_INTERVAL, POSITION_SIZE, EQUITY_SNAPSHOT_INTERVAL,
+    NARRATIVE_INTERVAL, EQUITY_SNAPSHOT_INTERVAL,
     MAX_1H_PRICE_CHANGE, MIN_VOLUME_RATIO,
+    CONFIRM_4H_UPTREND, EMA_FAST, EMA_SLOW,
+    get_position_size,
 )
 from src.exchange import Exchange
 from src.portfolio import PortfolioManager
@@ -14,10 +23,36 @@ from src.signals.llm_analyzer import analyze_narratives, get_new_or_building_nar
 BOT_ID = "NARRATIVE"
 
 
+async def _check_4h_uptrend(exchange: Exchange, symbol: str) -> bool:
+    """Confirm 4h EMA9 > EMA21 (multi-timeframe filter)."""
+    if not CONFIRM_4H_UPTREND:
+        return True
+    try:
+        klines = await exchange.get_klines(symbol, "4h", 30)
+        if len(klines) < EMA_SLOW + 2:
+            return True  # not enough data, allow trade
+        closes = pd.Series([k["close"] for k in klines])
+        ema_fast = closes.ewm(span=EMA_FAST, adjust=False).mean().iloc[-1]
+        ema_slow = closes.ewm(span=EMA_SLOW, adjust=False).mean().iloc[-1]
+        uptrend = ema_fast > ema_slow
+        if not uptrend:
+            logger.info(f"[{BOT_ID}] {symbol} 4h downtrend (EMA9={ema_fast:.2f} < EMA21={ema_slow:.2f}), skip")
+        return uptrend
+    except Exception as e:
+        logger.warning(f"[{BOT_ID}] 4h check failed for {symbol}: {e}")
+        return True  # fail open
+
+
 async def run(exchange: Exchange) -> None:
     """Main loop for the Narrative bot."""
     portfolio = PortfolioManager(BOT_ID, exchange)
     logger.info(f"[{BOT_ID}] Starting with {portfolio.cash} USDT")
+
+    # Initial equity snapshot
+    await portfolio.snapshot_equity()
+
+    # Track last-seen narrative stages for decay detection
+    _last_stages: dict[str, str] = {}
 
     snapshot_counter = 0
     while True:
@@ -38,13 +73,35 @@ async def run(exchange: Exchange) -> None:
             actionable = await asyncio.to_thread(get_new_or_building_narratives)
             logger.info(f"[{BOT_ID}] {len(actionable)} actionable narratives")
 
-            # 4. Evaluate each ticker
+            # ── SENTIMENT DECAY: check if any held narrative peaked ─────
             for narrative in actionable:
+                narr_key = narrative["narrative"][:50]
+                prev_stage = _last_stages.get(narr_key)
+                curr_stage = narrative["stage"]
+                _last_stages[narr_key] = curr_stage
+
+                if prev_stage in ("building", "early") and curr_stage == "peaking":
+                    # Narrative shifted to peaking — sell related positions
+                    for ticker in narrative["tickers"]:
+                        symbol = ticker.upper() + "USDT"
+                        if portfolio.has_open_position(symbol):
+                            for pos in portfolio.get_open_positions():
+                                if pos.ticker == symbol:
+                                    logger.info(f"[{BOT_ID}] DECAY SELL {symbol} — narrative peaked")
+                                    await portfolio.close_position(pos.id, "narrative_decay")
+
+            # 4. Evaluate each ticker for BUY
+            for narrative in actionable:
+                confidence = narrative["confidence"]
                 for ticker_symbol in narrative["tickers"]:
                     symbol = ticker_symbol.upper() + "USDT"
                     try:
                         # Check if pair exists on Binance
                         if not await exchange.symbol_exists(symbol):
+                            continue
+
+                        # Already holding this?
+                        if portfolio.has_open_position(symbol):
                             continue
 
                         # Check 1h price change < 15%
@@ -62,17 +119,26 @@ async def run(exchange: Exchange) -> None:
                                 logger.info(f"[{BOT_ID}] {symbol} vol ratio {vol_ratio:.1f} < {MIN_VOLUME_RATIO}, skip")
                                 continue
                         else:
-                            vol_ratio = 0.0  # testnet — no volume data, proceed anyway
-                            logger.debug(f"[{BOT_ID}] {symbol} no volume data (testnet), proceeding")
+                            vol_ratio = 0.0
+
+                        # ── 4h TREND CONFIRMATION ───────────────────────
+                        if not await _check_4h_uptrend(exchange, symbol):
+                            continue
+
+                        # ── DYNAMIC POSITION SIZING ─────────────────────
+                        size = get_position_size(confidence)
 
                         # All checks passed → BUY
-                        logger.info(f"[{BOT_ID}] BUY signal: {symbol} (narrative: {narrative['narrative'][:60]})")
+                        logger.info(
+                            f"[{BOT_ID}] BUY {symbol} | conf={confidence} | "
+                            f"size={size} USDT | narrative: {narrative['narrative'][:60]}"
+                        )
                         await portfolio.open_position(
                             ticker=symbol,
-                            usdt_amount=POSITION_SIZE,
+                            usdt_amount=size,
                             narrative_text=narrative["narrative"],
                             llm_reasoning=narrative["reasoning"],
-                            llm_confidence=narrative["confidence"],
+                            llm_confidence=confidence,
                             volume_ratio=vol_ratio,
                             signal_type=f"narrative_{narrative['signal']}",
                         )
